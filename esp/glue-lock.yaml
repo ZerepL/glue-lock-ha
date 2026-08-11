@@ -1,0 +1,97 @@
+esphome:
+  name: glue-lock
+  friendly_name: glue-lock
+
+  on_boot:
+    priority: 800
+    then:
+      - switch.turn_off: motor_a
+      - switch.turn_off: motor_b
+
+# Replace this with your actual platform if you aren't using ESP32.
+esp32:
+  variant: ESP32C3
+  
+logger:
+
+api:
+  encryption:
+    key: "XXXXXXXXXXXXXXXXXXXX"
+
+ota:
+  - platform: esphome
+    password: !secret glue_lock__ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  output_power: 8.5
+  ap:
+    ssid: glue-lock Fallback Hotspot
+    password: "XXXXXXXXXXXX"
+
+mqtt:
+  broker: mosquitto.lan
+
+  on_message:
+    topic: glue-lock/command
+    then:
+      - if:
+          condition:
+            lambda: 'return x == "LOCK";'
+          then:
+            - switch.turn_off: motor_b
+            - switch.turn_on: motor_a
+            - delay: 7s
+            - switch.turn_off: motor_a # Release tension
+            - switch.turn_on: motor_b
+            - delay: 1s
+            - switch.turn_off: motor_b
+
+      - if:
+          condition:
+            lambda: 'return x == "UNLOCK";'
+          then:
+            - switch.turn_off: motor_a
+            - switch.turn_on: motor_b
+            - delay: 7s
+            - switch.turn_off: motor_b # Release tension
+            - switch.turn_on: motor_a
+            - delay: 1s
+            - switch.turn_off: motor_a    
+
+switch:
+  - platform: gpio
+    id: motor_a
+    name: "Motor A"
+    pin: GPIO2
+    restore_mode: ALWAYS_OFF
+
+  - platform: gpio
+    id: motor_b
+    name: "Motor B"
+    pin: GPIO1
+    restore_mode: ALWAYS_OFF
+
+sensor:
+  # WiFi signal quality (RSSI) — dBm, negative = weaker
+  - platform: wifi_signal
+    name: "Lock WiFi Signal"
+    id: lock_wifi_signal
+    update_interval: 60s
+    entity_category: "diagnostic"
+    device_class: "signal_strength"
+    unit_of_measurement: "dBm"
+
+  # Uptime in hours
+  - platform: uptime
+    name: "Lock Uptime"
+    id: lock_uptime
+    icon: "mdi:clock"
+    unit_of_measurement: "hours"
+    entity_category: "diagnostic"
+    accuracy_decimals: 1
+
+    
+captive_portal:
+

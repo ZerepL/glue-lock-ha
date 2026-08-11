@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets (never commit real secrets)
+esp/secrets.yaml
+
+# Markdown (except README.md)
+*.md
+!README.md
+
+# Memory files
+memory/
+
+# Research notes
+research/
+
+# OS
+.DS_Store
+Thumbs.db
+
+openclaw-workspace-state.json 
