@@ -1,22 +1,35 @@
 esphome:
   name: glue-lock
-  friendly_name: glue-lock
+  friendly_name: Glue Lock
 
   on_boot:
     priority: 800
     then:
+      # Absolute safety condition:
+      # never allow either motor to remain energized after reboot.
       - switch.turn_off: motor_a
       - switch.turn_off: motor_b
 
-# Replace this with your actual platform if you aren't using ESP32.
+      # The physical position cannot be known after an interrupted
+      # motor cycle, so report UNKNOWN rather than guessing.
+      - lambda: |-
+          id(lock_state) = 0;
+          id(motor_busy) = false;
+
+      - mqtt.publish:
+          topic: glue-lock/state
+          payload: "UNKNOWN"
+
+
 esp32:
   variant: ESP32C3
-  
+
 logger:
 
 api:
   encryption:
-    key: "XXXXXXXXXXXXXXXXXXXX"
+    key: !secret glue_lock_api_key
+
 
 ota:
   - platform: esphome
@@ -26,72 +39,325 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   output_power: 8.5
+
   ap:
-    ssid: glue-lock Fallback Hotspot
-    password: "XXXXXXXXXXXX"
+    ssid: "Glue Lock Fallback"
+    password: !secret glue_lock_ap_password
 
 mqtt:
-  broker: mosquitto.lan
+  broker: !secret mqtt_broker
+
+  birth_message:
+    topic: glue-lock/availability
+    payload: "online"
+    qos: 1
+    retain: true
+
+  will_message:
+    topic: glue-lock/availability
+    payload: "offline"
+    qos: 1
+    retain: true
 
   on_message:
-    topic: glue-lock/command
-    then:
-      - if:
-          condition:
-            lambda: 'return x == "LOCK";'
-          then:
-            - switch.turn_off: motor_b
-            - switch.turn_on: motor_a
-            - delay: 7s
-            - switch.turn_off: motor_a # Release tension
-            - switch.turn_on: motor_b
-            - delay: 1s
-            - switch.turn_off: motor_b
+    # ============================================================
+    # MQTT LOCK / UNLOCK COMMAND
+    # ============================================================
 
+    - topic: glue-lock/command
+      then:
+
+        # --------------------------------------------------------
+        # LOCK
+        # --------------------------------------------------------
+        - if:
+            condition:
+              lambda: |-
+                return x == "LOCK" && !id(motor_busy);
+            then:
+              - script.execute: lock_door
+
+        # --------------------------------------------------------
+        # UNLOCK
+        # --------------------------------------------------------
+        - if:
+            condition:
+              lambda: |-
+                return x == "UNLOCK" && !id(motor_busy);
+            then:
+              - script.execute: unlock_door
+
+
+# ================================================================
+# GLOBAL STATE
+# ================================================================
+
+globals:
+  # 0 = UNKNOWN
+  # 1 = LOCKED
+  # 2 = UNLOCKED
+  - id: lock_state
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  # Prevents a second command from starting while
+  # the motor sequence is running.
+  - id: motor_busy
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+
+# ================================================================
+# MOTOR CONTROL SCRIPTS
+# ================================================================
+
+script:
+
+  # --------------------------------------------------------------
+  # LOCK
+  # --------------------------------------------------------------
+
+  - id: lock_door
+    mode: single
+
+    then:
+
+      # Extra software safety check.
       - if:
           condition:
-            lambda: 'return x == "UNLOCK";'
+            lambda: 'return id(motor_busy);'
           then:
-            - switch.turn_off: motor_a
-            - switch.turn_on: motor_b
-            - delay: 7s
-            - switch.turn_off: motor_b # Release tension
-            - switch.turn_on: motor_a
-            - delay: 1s
-            - switch.turn_off: motor_a    
+            - logger.log:
+                level: WARN
+                format: "Lock command ignored: motor already busy"
+            - script.stop: lock_door
+
+      - lambda: |-
+          id(motor_busy) = true;
+          id(lock_state) = 0;
+
+      - mqtt.publish:
+          topic: glue-lock/state
+          payload: "LOCKING"
+          qos: 1
+          retain: true
+
+      # ----------------------------------------------------------
+      # HARD SOFTWARE INTERLOCK
+      # ----------------------------------------------------------
+
+      # Never allow Motor B to be active while Motor A starts.
+      - switch.turn_off: motor_b
+
+      # ----------------------------------------------------------
+      # LOCK MOTOR
+      # ----------------------------------------------------------
+
+      - switch.turn_on: motor_a
+      - delay: 7s
+      - switch.turn_off: motor_a
+
+      # ----------------------------------------------------------
+      # RELEASE MECHANICAL TENSION
+      # ----------------------------------------------------------
+
+      - switch.turn_on: motor_b
+      - delay: 1s
+      - switch.turn_off: motor_b
+
+      # ----------------------------------------------------------
+      # FINISHED
+      # ----------------------------------------------------------
+
+      - lambda: |-
+          id(lock_state) = 1;
+          id(motor_busy) = false;
+
+      - mqtt.publish:
+          topic: glue-lock/state
+          payload: "LOCKED"
+          qos: 1
+          retain: true
+
+  # --------------------------------------------------------------
+  # UNLOCK
+  # --------------------------------------------------------------
+
+  - id: unlock_door
+    mode: single
+
+    then:
+
+      # Extra software safety check.
+      - if:
+          condition:
+            lambda: 'return id(motor_busy);'
+          then:
+            - logger.log:
+                level: WARN
+                format: "Unlock command ignored: motor already busy"
+            - script.stop: unlock_door
+
+      - lambda: |-
+          id(motor_busy) = true;
+          id(lock_state) = 0;
+
+      - mqtt.publish:
+          topic: glue-lock/state
+          payload: "UNLOCKING"
+          qos: 1
+          retain: true
+
+      # ----------------------------------------------------------
+      # HARD SOFTWARE INTERLOCK
+      # ----------------------------------------------------------
+
+      # Never allow Motor A to be active while Motor B starts.
+      - switch.turn_off: motor_a
+
+      # ----------------------------------------------------------
+      # UNLOCK MOTOR
+      # ----------------------------------------------------------
+
+      - switch.turn_on: motor_b
+      - delay: 7s
+      - switch.turn_off: motor_b
+
+      # ----------------------------------------------------------
+      # RELEASE MECHANICAL TENSION
+      # ----------------------------------------------------------
+
+      - switch.turn_on: motor_a
+      - delay: 1s
+      - switch.turn_off: motor_a
+
+      # ----------------------------------------------------------
+      # FINISHED
+      # ----------------------------------------------------------
+
+      - lambda: |-
+          id(lock_state) = 2;
+          id(motor_busy) = false;
+
+      - mqtt.publish:
+          topic: glue-lock/state
+          payload: "UNLOCKED"
+          qos: 1
+          retain: true
+
+# ================================================================
+# MOTOR OUTPUTS
+# ================================================================
 
 switch:
+
+  # These are INTERNAL.
+  # They should never appear as independently controllable
+  # switches in Home Assistant.
+
   - platform: gpio
     id: motor_a
-    name: "Motor A"
+    internal: true
     pin: GPIO2
     restore_mode: ALWAYS_OFF
 
   - platform: gpio
     id: motor_b
-    name: "Motor B"
+    internal: true
     pin: GPIO1
     restore_mode: ALWAYS_OFF
 
+# ================================================================
+# PHYSICAL BUTTON
+# ================================================================
+
+binary_sensor:
+
+  - platform: gpio
+    id: lock_button
+    name: "Lock Button"
+
+    pin:
+      number: GPIO0
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+
+    entity_category: diagnostic
+
+    # ------------------------------------------------------------
+    # SHORT PRESS
+    # ------------------------------------------------------------
+
+    on_press:
+      then:
+
+        # Ignore button while motor is running.
+        - if:
+            condition:
+              lambda: 'return id(motor_busy);'
+            then:
+              - logger.log:
+                  level: WARN
+                  format: "Physical button ignored: motor busy"
+
+        # Known LOCKED -> UNLOCK
+        - if:
+            condition:
+              lambda: |-
+                return !id(motor_busy) && id(lock_state) == 1;
+            then:
+              - script.execute: unlock_door
+
+        # Known UNLOCKED -> LOCK
+        - if:
+            condition:
+              lambda: |-
+                return !id(motor_busy) && id(lock_state) == 2;
+            then:
+              - script.execute: lock_door
+
+        # UNKNOWN -> do nothing.
+        #
+        # This is intentional. After a reboot we don't know the
+        # physical position of the lock, so blindly operating the
+        # motor would be unsafe.
+        - if:
+            condition:
+              lambda: |-
+                return !id(motor_busy) && id(lock_state) == 0;
+            then:
+              - logger.log:
+                  level: WARN
+                  format: "Physical button ignored: lock position UNKNOWN"
+
+
+# ================================================================
+# DIAGNOSTICS
+# ================================================================
+
 sensor:
-  # WiFi signal quality (RSSI) — dBm, negative = weaker
+
   - platform: wifi_signal
     name: "Lock WiFi Signal"
     id: lock_wifi_signal
     update_interval: 60s
-    entity_category: "diagnostic"
-    device_class: "signal_strength"
+    entity_category: diagnostic
+    device_class: signal_strength
     unit_of_measurement: "dBm"
 
-  # Uptime in hours
+
   - platform: uptime
     name: "Lock Uptime"
     id: lock_uptime
+    update_interval: 60s
     icon: "mdi:clock"
-    unit_of_measurement: "hours"
-    entity_category: "diagnostic"
+    unit_of_measurement: "h"
+    entity_category: diagnostic
     accuracy_decimals: 1
 
-    
-captive_portal:
 
+captive_portal:

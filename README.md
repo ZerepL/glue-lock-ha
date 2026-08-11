@@ -34,20 +34,98 @@ See the photo below. The 4 numbered solder points are marked directly on it:
 | VIN   | VCC (3.3V)          | TP_VCC              | Pad #3  |
 | GND   | Ground              | Common ground       | Pad #4  |
 
-
 ## MQTT Topics
 
-| Topic              | Direction | Payload    | Description         |
-|--------------------|-----------|------------|---------------------|
-| `glue-lock/command`| In        | `"LOCK"`   | Lock the door       |
-| `glue-lock/command`| In        | `"UNLOCK"` | Unlock the door     |
+| Topic | Direction | Payload | Description |
+| ------------------------- | --------- | ----------- | ------------------------- |
+| `glue-lock/command` | In | `LOCK` | Lock the door |
+| `glue-lock/command` | In | `UNLOCK` | Unlock the door |
+| `glue-lock/state` | Out | `LOCKING` | Lock operation in progress |
+| `glue-lock/state` | Out | `LOCKED` | Lock operation completed |
+| `glue-lock/state` | Out | `UNLOCKING` | Unlock operation in progress |
+| `glue-lock/state` | Out | `UNLOCKED` | Unlock operation completed |
+| `glue-lock/state` | Out | `UNKNOWN` | Physical lock position cannot be determined |
+| `glue-lock/availability` | Out | `online` | ESP32 is connected |
+| `glue-lock/availability` | Out | `offline` | ESP32 is unavailable |
+
+The `glue-lock/state` topic uses retained MQTT messages so Home Assistant can recover the most recently reported state.
+
+The ESP32 uses MQTT Last Will and Testament to publish `offline` if it unexpectedly disconnects.
+
+## Home Assistant
+
+The ESP32 can be integrated with Home Assistant using its MQTT Lock integration.
+
+The motor outputs are kept as internal ESPHome switches and are not exposed as independently controllable entities. This prevents the motors from being operated directly from Home Assistant and ensures that lock/unlock operations go through the firmware safety logic.
+
+Example Home Assistant configuration:
+
+```yaml
+mqtt:
+  - lock:
+      name: "Glue Lock"
+      unique_id: "glue_lock"
+
+      command_topic: "glue-lock/command"
+      state_topic: "glue-lock/state"
+
+      availability:
+        - topic: "glue-lock/availability"
+
+      payload_lock: "LOCK"
+      payload_unlock: "UNLOCK"
+
+      state_locked: "LOCKED"
+      state_unlocked: "UNLOCKED"
+      state_locking: "LOCKING"
+      state_unlocking: "UNLOCKING"
+
+      optimistic: false
+      qos: 1
+```
+
+### 3. Add this after the Home Assistant section
+
+## Motor Safety and Recovery
+
+The firmware includes software protection around motor operation:
+
+- Motor A and Motor B are explicitly switched off before the opposite motor is activated.
+- Motor outputs use `restore_mode: ALWAYS_OFF`.
+- Motor outputs are internal ESPHome switches and are not exposed directly to Home Assistant.
+- A `motor_busy` flag prevents another lock/unlock operation from starting while a motor sequence is running.
+- MQTT commands received while the motor is busy are ignored.
+- The physical button is also ignored while a motor sequence is running.
+
+### Reboot and Power-Loss Recovery
+
+The firmware does not automatically resume a motor operation after a reboot.
+
+On boot, both motor outputs are forced OFF and the lock state is set to `UNKNOWN`.
+
+This is intentional because the ESP32 cannot determine the physical position of the lock if power is lost during a motor operation.
+
+For example:
+
+```text
+LOCKING
+   ↓
+Motor running
+   ↓
+ESP32 loses power
+   ↓
+ESP32 reboots
+   ↓
+Both motors OFF
+   ↓
+UNKNOWN
+```
 
 ### Battery monitoring note
 
 Battery status currently flows via Home Assistant polling the lock's original BLE module over GATT (opcode `0x57`). This requires a Bluetooth proxy in HA.
 
 ## Project Structure
-
 ```
 ├── esp/                # ESPHome firmware (published)
 │   ├── glue-lock.yaml  # Main firmware config
@@ -58,11 +136,29 @@ Battery status currently flows via Home Assistant polling the lock's original BL
 └── .gitignore
 ```
 
+## Configuration and Secrets
+
+The ESPHome configuration uses `secrets.yaml` for credentials and other environment-specific values.
+
+Example:
+
+```yaml
+wifi_ssid: "YOUR_WIFI_SSID"
+wifi_password: "YOUR_WIFI_PASSWORD"
+
+mqtt_broker: "YOUR_MQTT_BROKER"
+mqtt_username: "YOUR_MQTT_USERNAME"
+mqtt_password: "YOUR_MQTT_PASSWORD"
+
+glue_lock_api_key: "GENERATE_A_NEW_API_KEY"
+glue_lock_ota_password: "GENERATE_A_STRONG_PASSWORD"
+glue_lock_ap_password: "GENERATE_A_STRONG_PASSWORD"
+```
+
 ## What Else Could Be Done
 
 A few things are already wired but unused in the current firmware:
 
-- **Button input (GPIO0)** — the circuit is soldered to Pad #2. It could be used as a hardware kill-switch: long-press stops accepting MQTT commands, short-press releases. Useful for physical tamper protection.
 - **Battery sensing from ESP32** — instead of relying on HA's BLE poll, you could tap the 7.2V battery rail through a voltage divider into an ESP32 ADC pin and publish `glue-lock/battery/voltage` via MQTT directly. The ESP32-C3 has limited usable ADC pins (GPIO0 is taken), so this may need an external I²C ADC chip or careful pin selection.
 - **LED feedback** — the PCB has LED test points (TP_D201, TP_D202, TP_D301) driven through a 74LV595A shift register. Controlling them from the ESP would give visual lock/unlock status at the door. Tracing the SPI lines to the shift register is needed before wiring up.
 
