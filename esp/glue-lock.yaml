@@ -156,7 +156,7 @@ script:
       # ----------------------------------------------------------
 
       - switch.turn_on: motor_a
-      - delay: 7s
+      - delay: 7.5s
       - switch.turn_off: motor_a
 
       # ----------------------------------------------------------
@@ -222,7 +222,7 @@ script:
       # ----------------------------------------------------------
 
       - switch.turn_on: motor_b
-      - delay: 7s
+      - delay: 7.5s
       - switch.turn_off: motor_b
 
       # ----------------------------------------------------------
@@ -355,9 +355,13 @@ sensor:
     id: lock_uptime
     update_interval: 60s
     icon: "mdi:clock"
-    unit_of_measurement: "h"
     entity_category: diagnostic
     accuracy_decimals: 1
+    filters:
+      - lambda: return x / 3600.0;
+    unit_of_measurement: "h"
 
 
 captive_portal:
+
+

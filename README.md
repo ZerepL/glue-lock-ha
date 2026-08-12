@@ -61,27 +61,27 @@ The motor outputs are kept as internal ESPHome switches and are not exposed as i
 Example Home Assistant configuration:
 
 ```yaml
-mqtt:
-  - lock:
-      name: "Glue Lock"
-      unique_id: "glue_lock"
+    mqtt:
+      - lock:
+          name: "Glue Lock"
+          unique_id: "glue_lock"
 
-      command_topic: "glue-lock/command"
-      state_topic: "glue-lock/state"
+          command_topic: "glue-lock/command"
+          state_topic: "glue-lock/state"
 
-      availability:
-        - topic: "glue-lock/availability"
+          availability:
+            - topic: "glue-lock/availability"
 
-      payload_lock: "LOCK"
-      payload_unlock: "UNLOCK"
+          payload_lock: "LOCK"
+          payload_unlock: "UNLOCK"
 
-      state_locked: "LOCKED"
-      state_unlocked: "UNLOCKED"
-      state_locking: "LOCKING"
-      state_unlocking: "UNLOCKING"
+          state_locked: "LOCKED"
+          state_unlocked: "UNLOCKED"
+          state_locking: "LOCKING"
+          state_unlocking: "UNLOCKING"
 
-      optimistic: false
-      qos: 1
+          optimistic: false
+          qos: 1
 ```
 
 ### 3. Add this after the Home Assistant section
@@ -159,8 +159,10 @@ glue_lock_ap_password: "GENERATE_A_STRONG_PASSWORD"
 
 A few things are already wired but unused in the current firmware:
 
-- **Battery sensing from ESP32** — instead of relying on HA's BLE poll, you could tap the 7.2V battery rail through a voltage divider into an ESP32 ADC pin and publish `glue-lock/battery/voltage` via MQTT directly. The ESP32-C3 has limited usable ADC pins (GPIO0 is taken), so this may need an external I²C ADC chip or careful pin selection.
+- **Battery sensing from ESP32** — instead of relying on HA's BLE poll, you could tap the 7.2V battery rail through a voltage divider into an ESP32 ADC pin and publish `glue-lock/battery/voltage` via MQTT directly.
 - **LED feedback** — the PCB has LED test points (TP_D201, TP_D202, TP_D301) driven through a 74LV595A shift register. Controlling them from the ESP would give visual lock/unlock status at the door. Tracing the SPI lines to the shift register is needed before wiring up.
+- **Better usage of the button** — I still dont took the time to work in the button, so that might be a good update for the future
+- **Lock status switch** — Almost sure that is possible to install a micro switch to check if the lock is locked on unlocked
 
 ---
 
@@ -174,11 +176,17 @@ Modifying the lock involves soldering and electrical work and may damage the loc
 
 The motor control timing is based on testing with the author's lock. **Verify the required motor run time for your own lock before relying on the modification for normal operation.**
 
-- Motor run time currently defaults to 7 seconds forward + 1 second reverse.
+- Motor run time currently defaults to 7.5 seconds forward + 1 second reverse to release the tension if you try to do it manually.
 - Use an appropriate motor driver stage; do not connect the motor directly to ESP32 GPIO pins.
 - The original BLE module remains installed for battery monitoring.
 - The ESP32-C3 uses 3.3 V logic.
 - The lock's battery can provide substantially higher voltage than the ESP32 GPIO level; verify voltages before connecting anything.
+
+## Contributing
+
+This project is a community effort and contributions are very welcome. If you see any improvement or just want to help, feel free to open an issue or pull request.
+
+Any help with testing, documentation, reverse engineering, or improving the project is appreciated.
 
 ## Reverse Engineering
 
